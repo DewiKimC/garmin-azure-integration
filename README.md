@@ -1,0 +1,1 @@
+# garmin-azure-integration
