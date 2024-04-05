@@ -8,19 +8,19 @@ import shutil
 import json
 import pytz
 import math
-from azure.storage.blob import BlobServiceClient, ContainerClient, BlobClient
-
+from azure.storage.blob import BlobServiceClient
 
 class Garmin:
-    def unzipGarminFile(inputBlob, tempLocalPath):
+    def __init__(self, account_url, sas_token):
+        self.blob_service_client = BlobServiceClient(account_url=account_url, credential=sas_token)
+
+    def unzipGarminFile(self, inputBlob, tempLocalPath):
         with ZipFile(inputBlob, 'r') as zipObj:
             zipObj.extractall(tempLocalPath)
 
-    def unzipSubject(accountURL, sasToken, subjectID, container="test", containerSubject="participants"):
-        # Basically loggin in into Azure
-        blob_service_client = BlobServiceClient(account_url=accountURL, credential=sasToken)
+    def unzipSubject(self, subjectID, containerSubject="participants"):
         # This gets all the blob names from Azure
-        container_client = blob_service_client.get_container_client(container=containerSubject)
+        container_client = self.blob_service_client.get_container_client(container=containerSubject)
 
         # Lists all the blobs currently in "testParticipant01"
         start_string = subjectID + "/sensordata/sync"
@@ -34,17 +34,16 @@ class Garmin:
         print("last updated: ", latest_blob)
 
         temporary_local_path = os.getcwd() + "/" + subjectID
-        print(temporary_local_path)
         os.makedirs(temporary_local_path)
         for blob_name in blob_names_list:
-            blob_client = blob_service_client.get_blob_client(container=containerSubject, blob=blob_name)  # This is sort of a reference to the blob data on Azure
+            blob_client = self.blob_service_client.get_blob_client(container=containerSubject, blob=blob_name)  # This is sort of a reference to the blob data on Azure
             with BytesIO() as input_blob:  # Writes data to a temporary file
                 # This is old and deprecated function to download the blob.
                 # blob_client.download_blob().download_to_stream(input_blob=input_blob)
                 blob_client.download_blob().readinto(input_blob)
 
                 input_blob.seek(0)  # This can, I think, be removed...
-                Garmin.unzipGarminFile(input_blob, temporary_local_path)
+                self.unzipGarminFile(input_blob, temporary_local_path)
             datafolder = os.listdir(temporary_local_path)[0]
             folder_path = temporary_local_path + "/" + datafolder
             datafile_list = os.listdir(folder_path)
@@ -59,11 +58,11 @@ class Garmin:
             shutil.rmtree(folder_path)
         shutil.rmtree(temporary_local_path)
 
-    def unzipGroup(accountURL, sasToken, subjectList):
+    def unzipGroup(self, subjectList):
         for subject in subjectList:
-            Garmin.unzipSubject(accountURL, sasToken, subject)
+            self.unzipSubject(subject)
 
-    def getOperatingSystem(blobName):
+    def getOperatingSystem(self, blobName):
         filename = blobName.split('/')[-1]
         if filename[0].isnumeric():
             return "android"
@@ -72,7 +71,7 @@ class Garmin:
         else:
             return "unknown_os"
 
-    def readBodyBatteryIos(inputBlob):
+    def readBodyBatteryIos(self, inputBlob):
         bbData = json.load(inputBlob)
         checks = ['value', 'description']
         tsList = [i['timestamp'] for i in bbData if all([x in i for x in checks])]
@@ -88,7 +87,7 @@ class Garmin:
                                      columns=["timestamp", "body_battery_status", "body_battery_score"])
         return bodyBatteryDf
 
-    def readMotionIos(inputBlob):
+    def readMotionIos(self, inputBlob):
         motionData = json.load(inputBlob)
         checks = ['duration', 'intensity']
         tsList = [i['startTime'] for i in motionData if all([x in i for x in checks])]
@@ -107,7 +106,7 @@ class Garmin:
                                          "steps_boolean"])
         return motionDf
 
-    def readRestHrIos(inputBlob):
+    def readRestHrIos(self, inputBlob):
         restHrData = json.load(inputBlob)
         checks = ['restingHeartRate', 'currentDayRestingHeartRate']
         tsList = [i['timestamp'] for i in restHrData if all([x in i for x in checks])]
@@ -117,7 +116,7 @@ class Garmin:
                                 columns=["timestamp", "resting_HR", "daily_resting_HR"])
         return restHrDf
 
-    def readWellnessIos(inputBlob):
+    def readWellnessIos(self, inputBlob):
         wellnessData = json.load(inputBlob)
         checks = ['heartRate', 'steps', 'distance', 'ascent', 'descent', 'moderateActivityMinutes',
                   'vigorousActivityMinutes', 'intensity', 'totalCalories', 'activeCalories']
@@ -153,7 +152,7 @@ class Garmin:
 
         return wellnessDf
 
-    def readSleepIos(inputBlob):
+    def readSleepIos(self, inputBlob):
         sleepData = json.load(inputBlob)
         checks = ['sleepDurationScore', 'remSleepScore', 'awakeningsCount', 'combinedAwakeScore',
                   'sleepRestlessnessScore',
@@ -187,7 +186,7 @@ class Garmin:
                                         "light_sleep_score", "sleep_recovery_score", "timestamp"])
         return sleepDf
 
-    def readAllJsonIos(blobServiceClient, containerSubject, blobNamesList):
+    def readAllJsonIos(self, blobServiceClient, containerSubject, blobNamesList):
         bodyBatteryBlobNamesList = [i for i in blobNamesList if "bodyBattery" in i]
         bb_df = []
         for bbBlobName in bodyBatteryBlobNamesList:
@@ -196,7 +195,7 @@ class Garmin:
                 # azure.downloadToStream(blobClient, inputBlob)
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                bb_datafragment = Garmin.readBodyBatteryIos(inputBlob)
+                bb_datafragment = self.readBodyBatteryIos(inputBlob)
                 bb_df.append(bb_datafragment)
         if len(bb_df) > 0:
             bb_df = pd.concat(bb_df, axis=0).reset_index(drop=True)
@@ -211,7 +210,7 @@ class Garmin:
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                motion_datafragment = Garmin.readMotionIos(inputBlob)
+                motion_datafragment = self.readMotionIos(inputBlob)
                 motion_df.append(motion_datafragment)
         if len(motion_df) > 0:
             motion_df = pd.concat(motion_df, axis=0).reset_index(drop=True)
@@ -226,7 +225,7 @@ class Garmin:
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                restHr_datafragment = Garmin.readRestHrIos(inputBlob)
+                restHr_datafragment = self.readRestHrIos(inputBlob)
                 restHr_df.append(restHr_datafragment)
         if len(restHr_df) > 0:
             restHr_df = pd.concat(restHr_df, axis=0).reset_index(drop=True)
@@ -241,7 +240,7 @@ class Garmin:
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                wellness_datafragment = Garmin.readWellnessIos(inputBlob)
+                wellness_datafragment = self.readWellnessIos(inputBlob)
                 wellness_df.append(wellness_datafragment)
         if len(wellness_df) > 0:
             wellness_df = pd.concat(wellness_df, axis=0).reset_index(drop=True)
@@ -256,7 +255,7 @@ class Garmin:
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                sleep_datafragment = Garmin.readSleepIos(inputBlob)
+                sleep_datafragment = self.readSleepIos(inputBlob)
                 sleep_df.append(sleep_datafragment)
         if len(sleep_df) > 0:
             sleep_df = pd.concat(sleep_df, axis=0).reset_index(drop=True)
@@ -281,7 +280,7 @@ class Garmin:
                           for i in all_df['timestamp']])
         return all_df
 
-    def readHrAndroid(inputBlob):
+    def readHrAndroid(self, inputBlob):
         heartrateData = json.load(inputBlob)
         heartrateList = [i['heartRate'] for i in heartrateData if 'heartRate' in i]
         statusList = [i['status'] for i in heartrateData if 'heartRate' in i]
@@ -298,7 +297,7 @@ class Garmin:
                                    columns=["local_time", "heart_rate_status", "heart_rate"])
         return heartrateDf
 
-    def readHrvAndroid(inputBlob):
+    def readHrvAndroid(self, inputBlob):
         hrvData = json.load(inputBlob)
         bbiList = [i['bbi'] for i in hrvData if 'bbi' in i]
         localTimeList = [dt(i['timestamp']['date']['year'],
@@ -314,7 +313,7 @@ class Garmin:
                              columns=["local_time", "hrv_bbi"])
         return hrvDf
 
-    def readRespirationAndroid(inputBlob):
+    def readRespirationAndroid(self, inputBlob):
         respirationData = json.load(inputBlob)
         breathsPerMinList = [i['breathsPerMinute'] for i in respirationData if 'breathsPerMinute' in i]
         localTimeList = [dt(i['timestamp']['date']['year'],
@@ -330,7 +329,7 @@ class Garmin:
                                      columns=["local_time", "breathing_rate"])
         return respirationDf
 
-    def readStepsAndroid(inputBlob):
+    def readStepsAndroid(self, inputBlob):
         stepsData = json.load(inputBlob)
         stepCountList = [i['stepCount'] for i in stepsData if 'stepCount' in i]
         totalStepsList = [i['totalSteps'] for i in stepsData if 'stepCount' in i]
@@ -357,7 +356,7 @@ class Garmin:
                                      columns=["local_time", "steps_window_size", "step_count", "total_steps"])
         return respirationDf
 
-    def readStressAndroid(inputBlob):
+    def readStressAndroid(self, inputBlob):
         stressData = json.load(inputBlob)
         stressScoreList = [i['stressScore'] for i in stressData if 'stressScore' in i]
         stressStatusList = [i['stressStatus'] for i in stressData if 'stressScore' in i]
@@ -374,7 +373,7 @@ class Garmin:
                                 columns=["local_time", "stress_status", "stress_score"])
         return stressDf
 
-    def readZeroCrossingAndroid(inputBlob):
+    def readZeroCrossingAndroid(self, inputBlob):
         zerocrossingData = json.load(inputBlob)
         zeroCrossingCountList = [i['zeroCrossingCount'] for i in zerocrossingData if 'zeroCrossingCount' in i]
         totalEnergyList = [i['totalEnergy'] for i in zerocrossingData if 'zeroCrossingCount' in i]
@@ -402,16 +401,16 @@ class Garmin:
                                                "zero_crossing_count", "total_energy"])
         return zerocrossingDf
 
-    def readAllJsonAndroid(blobServiceClient, containerSubject, blobNamesList, summarizePerMinute):
+    def readAllJsonAndroid(self, blobServiceClient, containerSubject, blobNamesList, summarizePerMinute):
         heartrateBlobNamesList = [i for i in blobNamesList if "heartrate" in i]
         heartrate_df = []
         for heartrateBlobName in heartrateBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=heartrateBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=heartrateBlobName)
             with BytesIO() as inputBlob:
                 # azure.downloadToStream(blobClient, inputBlob)
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                heartrate_datafragment = Garmin.readHrAndroid(inputBlob)
+                heartrate_datafragment = self.readHrAndroid(inputBlob)
                 heartrate_df.append(heartrate_datafragment)
         if len(heartrate_df) > 0:
             heartrate_df = pd.concat(heartrate_df, axis=0).reset_index(drop=True)
@@ -422,11 +421,11 @@ class Garmin:
         hrvBlobNamesList = [i for i in blobNamesList if "hrv" in i]
         hrv_df = []
         for hrvBlobName in hrvBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=hrvBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=hrvBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                hrv_datafragment = Garmin.readHrvAndroid(inputBlob)
+                hrv_datafragment = self.readHrvAndroid(inputBlob)
                 hrv_df.append(hrv_datafragment)
         if len(hrv_df) > 0:
             hrv_df = pd.concat(hrv_df, axis=0).reset_index(drop=True)
@@ -437,11 +436,11 @@ class Garmin:
         respirationBlobNamesList = [i for i in blobNamesList if "respiration" in i]
         respiration_df = []
         for respirationBlobName in respirationBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=respirationBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=respirationBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                respiration_datafragment = Garmin.readRespirationAndroid(inputBlob)
+                respiration_datafragment = self.readRespirationAndroid(inputBlob)
                 respiration_df.append(respiration_datafragment)
         if len(respiration_df) > 0:
             respiration_df = pd.concat(respiration_df, axis=0).reset_index(drop=True)
@@ -452,11 +451,11 @@ class Garmin:
         stepsBlobNamesList = [i for i in blobNamesList if "steps" in i]
         steps_df = []
         for stepsBlobName in stepsBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=stepsBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=stepsBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                steps_datafragment = Garmin.readStepsAndroid(inputBlob)
+                steps_datafragment = self.readStepsAndroid(inputBlob)
                 steps_df.append(steps_datafragment)
         if len(steps_df) > 0:
             steps_df = pd.concat(steps_df, axis=0).reset_index(drop=True)
@@ -467,11 +466,11 @@ class Garmin:
         stressBlobNamesList = [i for i in blobNamesList if "stress" in i]
         stress_df = []
         for stressBlobName in stressBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=stressBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=stressBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                stress_datafragment = Garmin.readStressAndroid(inputBlob)
+                stress_datafragment = self.readStressAndroid(inputBlob)
                 stress_df.append(stress_datafragment)
         if len(stress_df) > 0:
             stress_df = pd.concat(stress_df, axis=0).reset_index(drop=True)
@@ -482,11 +481,11 @@ class Garmin:
         zerocrossingBlobNamesList = [i for i in blobNamesList if "zerocrossing" in i]
         zerocrossing_df = []
         for zerocrossingBlobName in zerocrossingBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client (container=containerSubject, blob=zerocrossingBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=zerocrossingBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
-                zerocrossing_datafragment = Garmin.readZeroCrossingAndroid(inputBlob)
+                zerocrossing_datafragment = self.readZeroCrossingAndroid(inputBlob)
                 zerocrossing_df.append(zerocrossing_datafragment)
         if len(zerocrossing_df) > 0:
             zerocrossing_df = pd.concat(zerocrossing_df, axis=0).reset_index(drop=True)
@@ -528,10 +527,9 @@ class Garmin:
 
         return all_df
 
-    def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute, container="participants"):  # , lastUpdatedItem
-        blob_service_client = BlobServiceClient(account_url=accountURL, credential=sasToken)
+    def getGarminDataSubject(self, subjectID, summarizePerMinute, container="participants"):  # , lastUpdatedItem
         containerSubject = "participants"
-        container_client = blob_service_client.get_container_client(container=container)
+        container_client = self.blob_service_client.get_container_client(container=container)
         start_string = subjectID + "/garmindata/sync_"
         blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
         print(blob_names_list)
@@ -543,32 +541,30 @@ class Garmin:
         if len(blob_names_list) == 0:
             raise FileNotFoundError(
                 "The data of this subject has not been unzipped yet. Please first run unzipSubject.")
-        operating_system = Garmin.getOperatingSystem(blob_names_list[0])
+        operating_system = self.getOperatingSystem(blob_names_list[0])
         if operating_system == "ios":
-            garmin_data = Garmin.readAllJsonIos(blob_service_client, containerSubject, blob_names_list)
+            garmin_data = self.readAllJsonIos(self.blob_service_client, containerSubject, blob_names_list)
         elif operating_system == "android":
-            garmin_data = Garmin.readAllJsonAndroid(blob_service_client, containerSubject, blob_names_list, summarizePerMinute)
+            garmin_data = self.readAllJsonAndroid(self.blob_service_client, containerSubject, blob_names_list, summarizePerMinute)
         else:
             raise OSError("The operating system is unknown. The options are android or ios.")
         garmin_data.insert(0, "subject", [subjectID] * len(garmin_data['timestamp']))
         garmin_data.insert(1, "os_type", [operating_system] * len(garmin_data['timestamp']))
         return garmin_data
 
-    def getGarminDataGroup(accountURL, sasToken, subjectList, summarizePerMinute):
+    def getGarminDataGroup(self, subjectList, summarizePerMinute):
         garminData = []
         for subject in subjectList:
-            subjectData = Garmin.getGarminDataSubject(accountURL, sasToken, subject, summarizePerMinute)
+            subjectData = self.getGarminDataSubject(subject, summarizePerMinute)
             garminData.append(subjectData)
         garminData = pd.concat(garminData, axis=0)
         garminData = garminData.reset_index(drop=True)
         return garminData
 
-    def getUniqueFileNames(accountURL, sasToken, subjectID, container, blobServiceClient):
-        blob_service_client = BlobServiceClient(account_url=accountURL, credential=sasToken)
-        containerSubject = "participants"
-        container_client = blobServiceClient.get_container_client(container=container)
+    def getUniqueFileNames(self, subjectID, container="participants"):
+        container_client = self.blob_service_client.get_container_client(container=container)
         start_string = subjectID + "/garmindata/sync"
-        # blob_names_list = azure.listBlobs(container_client, start_string) WOUTER CHECKEN :)
+
         blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
         if len(blob_names_list) == 0:
             raise FileNotFoundError(
@@ -598,11 +594,12 @@ if __name__ == "__main__":
     # testdata.to_csv("garmin_data.csv")
 
     # For unzipping and preprocessing only one subject.
-    Garmin.unzipSubject(account_url, sas_token, subject)
+    garmin = Garmin(account_url, sas_token)
+    garmin.unzipSubject(subject)
 
 
     # def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute, blobServiceClient, container):
-    testdata = Garmin.getGarminDataSubject(account_url, sas_token, subject, summarizePerMinute=False)
+    testdata = garmin.getGarminDataSubject(subject, summarizePerMinute=False)
     testdata.to_csv("garmin_data.csv")
 
     # weten dat er nieuwe data is
