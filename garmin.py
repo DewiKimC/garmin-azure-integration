@@ -1,5 +1,3 @@
-from azure_handling import AzureHandler as azure
-
 import pandas as pd
 import numpy as np
 from io import BytesIO
@@ -12,33 +10,40 @@ import pytz
 import math
 from azure.storage.blob import BlobServiceClient, ContainerClient, BlobClient
 
+
 class Garmin:
-
-    def __init__(self):
-        self.a = []
-
     def unzipGarminFile(inputBlob, tempLocalPath):
         with ZipFile(inputBlob, 'r') as zipObj:
             zipObj.extractall(tempLocalPath)
 
-    def unzipSubject(accountURL, sasToken, subjectID, containerSubject="participants"):
+    def unzipSubject(accountURL, sasToken, subjectID, container="test", containerSubject="participants"):
         # Basically loggin in into Azure
-        blob_service_client = azure.getBlobServiceClient(accountURL, sasToken)
-        container_client = azure.getContainer(blob_service_client, containerSubject) # This gets all the blob names from Azure
+        blob_service_client = BlobServiceClient(account_url=accountURL, credential=sasToken)
+        # This gets all the blob names from Azure
+        container_client = blob_service_client.get_container_client(container=containerSubject)
+
+        # Lists all the blobs currently in "testParticipant01"
         start_string = subjectID + "/sensordata/sync"
-        blob_names_list = azure.listBlobs(container_client, start_string)
-        print ("these are the blob name lists: ", blob_names_list)
-        print("This is the first blob in blob name lists: ", blob_names_list[-1])
+        blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
+        print("Blob names: ", blob_names_list)
+        print("Last Blob:  ", blob_names_list[-1])
+
         # This lists all the blobs (zip files) in participants/sensorsdata/sync*....*.zip
-        # last_updated_item_blob = sorted(blob_names_list, key=lambda x: x[1])[-1] #sorteert de lijst blobnames list op de eerste element van elk tuple en neemt hierna de eerste in de array
-        # print("last updated= ", last_updated_item_blob)
+        blob_list = container_client.list_blobs(start_string)
+        latest_blob = sorted(blob_list, key=lambda blob: blob.creation_time)[-1] #sorteert de lijst blobnames list op de eerste element van elk tuple en neemt hierna de eerste in de array
+        print("last updated: ", latest_blob)
+
         temporary_local_path = os.getcwd() + "/" + subjectID
+        print(temporary_local_path)
         os.makedirs(temporary_local_path)
         for blob_name in blob_names_list:
-            blob_client = azure.getBlob(blob_service_client, containerSubject, blob_name) # This is sort of a reference to the blob data on Azure
-            with BytesIO() as input_blob:            # Writes data to a temporary file
-                azure.downloadToStream(blob_client, input_blob)
-                input_blob.seek(0) # This can, I think, be removed...
+            blob_client = blob_service_client.get_blob_client(container=containerSubject, blob=blob_name)  # This is sort of a reference to the blob data on Azure
+            with BytesIO() as input_blob:  # Writes data to a temporary file
+                # This is old and deprecated function to download the blob.
+                # blob_client.download_blob().download_to_stream(input_blob=input_blob)
+                blob_client.download_blob().readinto(input_blob)
+
+                input_blob.seek(0)  # This can, I think, be removed...
                 Garmin.unzipGarminFile(input_blob, temporary_local_path)
             datafolder = os.listdir(temporary_local_path)[0]
             folder_path = temporary_local_path + "/" + datafolder
@@ -48,7 +53,9 @@ class Garmin:
                 datafile_name = "/" + datafile
                 new_blob_name = blob_name.replace("sensordata", "garmindata")
                 new_blob_name = new_blob_name.replace(".zip", datafile_name)
-                azure.uploadBlobFile(container_client, file_path, new_blob_name)
+                # azure.uploadBlobFile(container_client, file_path, new_blob_name)
+                with open(file=file_path, mode="rb") as data:
+                    container_client.upload_blob(name=new_blob_name, data=data, overwrite=True)
             shutil.rmtree(folder_path)
         shutil.rmtree(temporary_local_path)
 
@@ -184,9 +191,10 @@ class Garmin:
         bodyBatteryBlobNamesList = [i for i in blobNamesList if "bodyBattery" in i]
         bb_df = []
         for bbBlobName in bodyBatteryBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, bbBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=bbBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                # azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 bb_datafragment = Garmin.readBodyBatteryIos(inputBlob)
                 bb_df.append(bb_datafragment)
@@ -199,9 +207,9 @@ class Garmin:
         motionBlobNamesList = [i for i in blobNamesList if "motion" in i]
         motion_df = []
         for motionBlobName in motionBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, motionBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=motionBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 motion_datafragment = Garmin.readMotionIos(inputBlob)
                 motion_df.append(motion_datafragment)
@@ -214,9 +222,9 @@ class Garmin:
         restHrBlobNamesList = [i for i in blobNamesList if "restingHeartRate" in i]
         restHr_df = []
         for restHrBlobName in restHrBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, restHrBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=restHrBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 restHr_datafragment = Garmin.readRestHrIos(inputBlob)
                 restHr_df.append(restHr_datafragment)
@@ -229,9 +237,9 @@ class Garmin:
         wellnessBlobNamesList = [i for i in blobNamesList if "welness" in i]
         wellness_df = []
         for wellnessBlobName in wellnessBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, wellnessBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=wellnessBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 wellness_datafragment = Garmin.readWellnessIos(inputBlob)
                 wellness_df.append(wellness_datafragment)
@@ -244,9 +252,9 @@ class Garmin:
         sleepBlobNamesList = [i for i in blobNamesList if "sleep" in i]
         sleep_df = []
         for sleepBlobName in sleepBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, sleepBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=sleepBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 sleep_datafragment = Garmin.readSleepIos(inputBlob)
                 sleep_df.append(sleep_datafragment)
@@ -398,9 +406,10 @@ class Garmin:
         heartrateBlobNamesList = [i for i in blobNamesList if "heartrate" in i]
         heartrate_df = []
         for heartrateBlobName in heartrateBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, heartrateBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=heartrateBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                # azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 heartrate_datafragment = Garmin.readHrAndroid(inputBlob)
                 heartrate_df.append(heartrate_datafragment)
@@ -413,9 +422,9 @@ class Garmin:
         hrvBlobNamesList = [i for i in blobNamesList if "hrv" in i]
         hrv_df = []
         for hrvBlobName in hrvBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, hrvBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=hrvBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 hrv_datafragment = Garmin.readHrvAndroid(inputBlob)
                 hrv_df.append(hrv_datafragment)
@@ -428,9 +437,9 @@ class Garmin:
         respirationBlobNamesList = [i for i in blobNamesList if "respiration" in i]
         respiration_df = []
         for respirationBlobName in respirationBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, respirationBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=respirationBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 respiration_datafragment = Garmin.readRespirationAndroid(inputBlob)
                 respiration_df.append(respiration_datafragment)
@@ -443,9 +452,9 @@ class Garmin:
         stepsBlobNamesList = [i for i in blobNamesList if "steps" in i]
         steps_df = []
         for stepsBlobName in stepsBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, stepsBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=stepsBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 steps_datafragment = Garmin.readStepsAndroid(inputBlob)
                 steps_df.append(steps_datafragment)
@@ -458,9 +467,9 @@ class Garmin:
         stressBlobNamesList = [i for i in blobNamesList if "stress" in i]
         stress_df = []
         for stressBlobName in stressBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, stressBlobName)
+            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=stressBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 stress_datafragment = Garmin.readStressAndroid(inputBlob)
                 stress_df.append(stress_datafragment)
@@ -473,9 +482,9 @@ class Garmin:
         zerocrossingBlobNamesList = [i for i in blobNamesList if "zerocrossing" in i]
         zerocrossing_df = []
         for zerocrossingBlobName in zerocrossingBlobNamesList:
-            blobClient = azure.getBlob(blobServiceClient, containerSubject, zerocrossingBlobName)
+            blobClient = blobServiceClient.get_blob_client (container=containerSubject, blob=zerocrossingBlobName)
             with BytesIO() as inputBlob:
-                azure.downloadToStream(blobClient, inputBlob)
+                blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
                 zerocrossing_datafragment = Garmin.readZeroCrossingAndroid(inputBlob)
                 zerocrossing_df.append(zerocrossing_datafragment)
@@ -519,12 +528,12 @@ class Garmin:
 
         return all_df
 
-    def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute):#, lastUpdatedItem
-        blob_service_client = azure.getBlobServiceClient(accountURL, sasToken)
+    def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute, container="participants"):  # , lastUpdatedItem
+        blob_service_client = BlobServiceClient(account_url=accountURL, credential=sasToken)
         containerSubject = "participants"
-        container_client = azure.getContainer(blob_service_client, containerSubject)
+        container_client = blob_service_client.get_container_client(container=container)
         start_string = subjectID + "/garmindata/sync_"
-        blob_names_list = azure.listBlobs(container_client, start_string)
+        blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
         print(blob_names_list)
         # Iterate over each file name in blob_names_list
         for blob_name in blob_names_list:
@@ -538,8 +547,7 @@ class Garmin:
         if operating_system == "ios":
             garmin_data = Garmin.readAllJsonIos(blob_service_client, containerSubject, blob_names_list)
         elif operating_system == "android":
-            garmin_data = Garmin.readAllJsonAndroid(blob_service_client, containerSubject, blob_names_list,
-                                                    summarizePerMinute)
+            garmin_data = Garmin.readAllJsonAndroid(blob_service_client, containerSubject, blob_names_list, summarizePerMinute)
         else:
             raise OSError("The operating system is unknown. The options are android or ios.")
         garmin_data.insert(0, "subject", [subjectID] * len(garmin_data['timestamp']))
@@ -555,18 +563,20 @@ class Garmin:
         garminData = garminData.reset_index(drop=True)
         return garminData
 
-    def getUniqueFileNames(accountURL, sasToken, subjectID):
-        blob_service_client = azure.getBlobServiceClient(accountURL, sasToken)
+    def getUniqueFileNames(accountURL, sasToken, subjectID, container, blobServiceClient):
+        blob_service_client = BlobServiceClient(account_url=accountURL, credential=sasToken)
         containerSubject = "participants"
-        container_client = azure.getContainer(blob_service_client, containerSubject)
+        container_client = blobServiceClient.get_container_client(container=container)
         start_string = subjectID + "/garmindata/sync"
-        blob_names_list = azure.listBlobs(container_client, start_string)
+        # blob_names_list = azure.listBlobs(container_client, start_string) WOUTER CHECKEN :)
+        blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
         if len(blob_names_list) == 0:
             raise FileNotFoundError(
                 "The data of this subject has not been unzipped yet. Please first run unzipSubject.")
         fileList = [i.split("_")[-1] for i in blob_names_list]
         uniqueFileList = list(set(fileList))
         return uniqueFileList
+
 
 if __name__ == "__main__":
     # The script is based on generating a SAS token to use for data access.
@@ -578,7 +588,7 @@ if __name__ == "__main__":
     # You are good to go and use this script.
     # STUDY ENVIRONMENT PARAMETERS
     account_url = "https://vitalityhubwearabledata.blob.core.windows.net/"  # See explanation above
-    sas_token= "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2024-07-28T17:31:44Z&st=2024-03-28T10:31:44Z&spr=https,http&sig=SR6G0FBa1z28RunlFPhDzv4%2FhEfKcvKd5gXGd8bkoZM%3D"
+    sas_token = "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2024-07-28T17:31:44Z&st=2024-03-28T10:31:44Z&spr=https,http&sig=SR6G0FBa1z28RunlFPhDzv4%2FhEfKcvKd5gXGd8bkoZM%3D"
     subject = "testParticipant01"  # Select a subject that exists (see folders in "participants" container)
     subject_list = ["", "", "", ""]  # Select multiple subjects that exist (see folders in "participants" container)
     # CALL FUNCTIONS
@@ -589,12 +599,14 @@ if __name__ == "__main__":
 
     # For unzipping and preprocessing only one subject.
     Garmin.unzipSubject(account_url, sas_token, subject)
+
+
+    # def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute, blobServiceClient, container):
     testdata = Garmin.getGarminDataSubject(account_url, sas_token, subject, summarizePerMinute=False)
     testdata.to_csv("garmin_data.csv")
 
-    #weten dat er nieuwe data is
-    #nieuwe data krijgen zonder de oude data
-
+    # weten dat er nieuwe data is
+    # nieuwe data krijgen zonder de oude data
 
     data = pd.read_csv("garmin_data.csv")
 
