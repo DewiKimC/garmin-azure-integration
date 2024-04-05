@@ -1,4 +1,4 @@
-from azure.storage.blob import BlobServiceClient, ContainerClient, BlobClient
+from azure.storage.blob import BlobServiceClient, ContainerClient, BlobClient as azure
 from io import BytesIO
 
 
