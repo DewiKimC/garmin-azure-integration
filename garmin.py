@@ -21,18 +21,10 @@ class Garmin:
     def unzipSubject(self, subjectID, containerSubject="participants"):
         # This gets all the blob names from Azure
         container_client = self.blob_service_client.get_container_client(container=containerSubject)
-
         # Lists all the blobs currently in "testParticipant01"
         start_string = subjectID + "/sensordata/sync"
         blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
-        print("Blob names: ", blob_names_list)
-        print("Last Blob:  ", blob_names_list[-1])
-
         # This lists all the blobs (zip files) in participants/sensorsdata/sync*....*.zip
-        blob_list = container_client.list_blobs(start_string)
-        latest_blob = sorted(blob_list, key=lambda blob: blob.creation_time)[-1] #sorteert de lijst blobnames list op de eerste element van elk tuple en neemt hierna de eerste in de array
-        print("last updated: ", latest_blob)
-
         temporary_local_path = os.getcwd() + "/" + subjectID
         os.makedirs(temporary_local_path)
         for blob_name in blob_names_list:
@@ -41,7 +33,6 @@ class Garmin:
                 # This is old and deprecated function to download the blob.
                 # blob_client.download_blob().download_to_stream(input_blob=input_blob)
                 blob_client.download_blob().readinto(input_blob)
-
                 input_blob.seek(0)  # This can, I think, be removed...
                 self.unzipGarminFile(input_blob, temporary_local_path)
             datafolder = os.listdir(temporary_local_path)[0]
@@ -115,6 +106,15 @@ class Garmin:
         restHrDf = pd.DataFrame(list(zip(tsList, restHrList, dailyRestHrList)),
                                 columns=["timestamp", "resting_HR", "daily_resting_HR"])
         return restHrDf
+    def readStressIos(self, inputBlob):
+        stressData = json.load(inputBlob)
+        checks = ['stressScore', 'statusValue']
+        tsList = [i['timestamp'] for i in stressData if all([x in i for x in checks])]
+        stressList = [i['stressScore'] for i in stressData if all([x in i for x in checks])]
+        statusList = [i['statusValue'] for i in stressData if all([x in i for x in checks])]
+        stressdf =  pd.DataFrame(list(zip(tsList, stressList, statusList)),
+                                columns=["timestamp", "stress", "status"])
+        return stressdf
 
     def readWellnessIos(self, inputBlob):
         wellnessData = json.load(inputBlob)
@@ -187,6 +187,21 @@ class Garmin:
         return sleepDf
 
     def readAllJsonIos(self, blobServiceClient, containerSubject, blobNamesList):
+        stressBlobNamesList = [i for i in blobNamesList if ("Stress") in i]
+        stress_df = []
+        for stressBlobName in stressBlobNamesList:
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=stressBlobName)
+            with BytesIO() as inputBlob:
+                blobClient.download_blob().download_to_stream(inputBlob)
+                inputBlob.seek(0)
+                stress_datafragment = self.readStressIos(inputBlob)
+                stress_df.append(stress_datafragment)
+        if len(stress_df) > 0:
+            stress_df = pd.concat(stress_df, axis=0).reset_index(drop=True)
+            stress_df = stress_df.drop_duplicates(subset='timestamp', keep='first')
+        else:
+            stress_df = pd.DataFrame(columns=['timestamp'])
+
         bodyBatteryBlobNamesList = [i for i in blobNamesList if "bodyBattery" in i]
         bb_df = []
         for bbBlobName in bodyBatteryBlobNamesList:
@@ -273,6 +288,8 @@ class Garmin:
             all_df = pd.merge(all_df, bb_df, on="timestamp", how="outer")
         if len(sleep_df['timestamp']) > 0:
             all_df = pd.merge(all_df, sleep_df, on="timestamp", how="outer")
+        if len(stress_df['timestamp']) > 0:
+            all_df = pd.merge(all_df, stress_df, on="timestamp", how="outer")
         all_df = all_df.sort_values("timestamp").reset_index(drop=True)
         all_df.insert(1, "local_time",
                       [dt.fromtimestamp(i, pytz.utc).astimezone(pytz.timezone('Europe/Amsterdam')).strftime(
@@ -401,7 +418,7 @@ class Garmin:
                                                "zero_crossing_count", "total_energy"])
         return zerocrossingDf
 
-    def readAllJsonAndroid(self, blobServiceClient, containerSubject, blobNamesList, summarizePerMinute):
+    def readAllJsonAndroid(self, containerSubject, blobNamesList, summarizePerMinute):
         heartrateBlobNamesList = [i for i in blobNamesList if "heartrate" in i]
         heartrate_df = []
         for heartrateBlobName in heartrateBlobNamesList:
@@ -527,25 +544,50 @@ class Garmin:
 
         return all_df
 
-    def getGarminDataSubject(self, subjectID, summarizePerMinute, container="participants"):  # , lastUpdatedItem
+    def getLatestBlobNumber(self, subjectID):
         containerSubject = "participants"
+        container_client = self.blob_service_client.get_container_client(container=containerSubject)
+        start_string = subjectID + "/sensordata/sync"
+        blob_list = container_client.list_blobs(start_string)
+        latest_blob = sorted(blob_list, key=lambda blob: blob.creation_time)[-1]
+        latest_blob_number = latest_blob.name.split("_")[1]
+
+        # Manually setting the "lastest" blob, this is not actually the latest, but it does have the most applicible data
+        # and therefor good for testing
+        latest_blob_number = "1711448820"
+
+        return latest_blob_number
+
+    def getGarminDataSubject(self, subjectID, summarizePerMinute, container="participants"):  # , lastUpdatedItem
         container_client = self.blob_service_client.get_container_client(container=container)
-        start_string = subjectID + "/garmindata/sync_"
-        blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
-        print(blob_names_list)
+        latest_blob_number = self.getLatestBlobNumber(subjectID)
+
+        # start_string = subjectID + "/sensordata/sync_"
+        # blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))# blob_names_list = [blob_name for blob_name in container_client.list_blob_names(name_starts_with=start_string) if blob_name.endswith('loggedStressData.json')]
+        # print("Blob names: ", blob_names_list)
+        # print("These are the blob names list sensordata", blob_names_list)
         # Iterate over each file name in blob_names_list
+
+        start_string = subjectID + "/garmindata/sync_" + latest_blob_number
+        blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
+        print("These are the blob names list garmindata", blob_names_list)
+
         for blob_name in blob_names_list:
             # Check if the file name ends with 'loggedStressData.json'
             if blob_name.endswith('loggedStressData.json'):
-                print(blob_name)
+                blob_client = container_client.get_blob_client(blob_name)
+                streamdownloader = blob_client.download_blob()
+                fileReader = json.loads(streamdownloader.readall())
+                print("This is the filereader: ", fileReader[0])
+
         if len(blob_names_list) == 0:
             raise FileNotFoundError(
                 "The data of this subject has not been unzipped yet. Please first run unzipSubject.")
         operating_system = self.getOperatingSystem(blob_names_list[0])
         if operating_system == "ios":
-            garmin_data = self.readAllJsonIos(self.blob_service_client, containerSubject, blob_names_list)
+            garmin_data = self.readAllJsonIos(self.blob_service_client, container, blob_names_list)
         elif operating_system == "android":
-            garmin_data = self.readAllJsonAndroid(self.blob_service_client, containerSubject, blob_names_list, summarizePerMinute)
+            garmin_data = self.readAllJsonAndroid(self.blob_service_client, container, blob_names_list, summarizePerMinute)
         else:
             raise OSError("The operating system is unknown. The options are android or ios.")
         garmin_data.insert(0, "subject", [subjectID] * len(garmin_data['timestamp']))
@@ -585,6 +627,7 @@ if __name__ == "__main__":
     # STUDY ENVIRONMENT PARAMETERS
     account_url = "https://vitalityhubwearabledata.blob.core.windows.net/"  # See explanation above
     sas_token = "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2024-07-28T17:31:44Z&st=2024-03-28T10:31:44Z&spr=https,http&sig=SR6G0FBa1z28RunlFPhDzv4%2FhEfKcvKd5gXGd8bkoZM%3D"
+
     subject = "testParticipant01"  # Select a subject that exists (see folders in "participants" container)
     subject_list = ["", "", "", ""]  # Select multiple subjects that exist (see folders in "participants" container)
     # CALL FUNCTIONS
@@ -609,9 +652,9 @@ if __name__ == "__main__":
 
     # Example: Selecting specific columns
     # print(data)
-    selected_columns = data[['heart_rate', 'resting_HR', 'timestamp']]
+    selected_columns = data[['subject', 'timestamp', 'local_time', 'status', "stress"]]
 
-    resting_HR = data[['resting_HR']]
+    # resting_HR = data[['resting_HR']]
 
-    print("resting_HR: ", resting_HR)
+    # print("resting_HR: ", resting_HR)
     print(selected_columns)
