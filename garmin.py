@@ -654,7 +654,25 @@ if __name__ == "__main__":
     # print(data)
     selected_columns = data[['subject', 'timestamp', 'local_time', 'status', "stress"]]
 
+    valid_status_data = data[data['status'] == 'valid']
+
+    # Display the "stress" column for the filtered rows
+    selected_stress = valid_status_data[['stress', 'timestamp']]
+    first_timestamp = selected_stress['timestamp'].iloc[0]
+    last_timestamp = selected_stress['timestamp'].iloc[-1]
+
+    time_passed = last_timestamp - first_timestamp
+
+    print("First Timestamp:", first_timestamp)
+    print("Last Timestamp:", last_timestamp)
+    print("Passed Timestamp:", time_passed)
+
+
+    # status checken
+    # stress van bepaalde tijd
+
     # resting_HR = data[['resting_HR']]
 
     # print("resting_HR: ", resting_HR)
-    print(selected_columns)
+    print(selected_stress)
+
