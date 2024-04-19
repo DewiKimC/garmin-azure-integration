@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 from zipfile import ZipFile
-from datetime import datetime as dt
+from datetime import datetime, timedelta
 import os
 import shutil
 import json
@@ -49,8 +49,8 @@ class Garmin:
             shutil.rmtree(folder_path)
         shutil.rmtree(temporary_local_path)
 
-    def unzipGroup(self, subjectList):
-        for subject in subjectList:
+    def unzipGroup(self, subject_list):
+        for subject in subject_list:
             self.unzipSubject(subject)
 
     def getOperatingSystem(self, blobName):
@@ -186,7 +186,7 @@ class Garmin:
                                         "light_sleep_score", "sleep_recovery_score", "timestamp"])
         return sleepDf
 
-    def readAllJsonIos(self, blobServiceClient, containerSubject, blobNamesList):
+    def readAllJsonIos(self, containerSubject, blobNamesList):
         stressBlobNamesList = [i for i in blobNamesList if ("Stress") in i]
         stress_df = []
         for stressBlobName in stressBlobNamesList:
@@ -205,7 +205,7 @@ class Garmin:
         bodyBatteryBlobNamesList = [i for i in blobNamesList if "bodyBattery" in i]
         bb_df = []
         for bbBlobName in bodyBatteryBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=bbBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=bbBlobName)
             with BytesIO() as inputBlob:
                 # azure.downloadToStream(blobClient, inputBlob)
                 blobClient.download_blob().download_to_stream(inputBlob)
@@ -221,7 +221,7 @@ class Garmin:
         motionBlobNamesList = [i for i in blobNamesList if "motion" in i]
         motion_df = []
         for motionBlobName in motionBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=motionBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=motionBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
@@ -236,7 +236,7 @@ class Garmin:
         restHrBlobNamesList = [i for i in blobNamesList if "restingHeartRate" in i]
         restHr_df = []
         for restHrBlobName in restHrBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=restHrBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=restHrBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
@@ -251,7 +251,7 @@ class Garmin:
         wellnessBlobNamesList = [i for i in blobNamesList if "welness" in i]
         wellness_df = []
         for wellnessBlobName in wellnessBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=wellnessBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=wellnessBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
@@ -266,7 +266,7 @@ class Garmin:
         sleepBlobNamesList = [i for i in blobNamesList if "sleep" in i]
         sleep_df = []
         for sleepBlobName in sleepBlobNamesList:
-            blobClient = blobServiceClient.get_blob_client(container=containerSubject, blob=sleepBlobName)
+            blobClient = self.blob_service_client.get_blob_client(container=containerSubject, blob=sleepBlobName)
             with BytesIO() as inputBlob:
                 blobClient.download_blob().download_to_stream(inputBlob)
                 inputBlob.seek(0)
@@ -292,7 +292,7 @@ class Garmin:
             all_df = pd.merge(all_df, stress_df, on="timestamp", how="outer")
         all_df = all_df.sort_values("timestamp").reset_index(drop=True)
         all_df.insert(1, "local_time",
-                      [dt.fromtimestamp(i, pytz.utc).astimezone(pytz.timezone('Europe/Amsterdam')).strftime(
+                      [datetime.fromtimestamp(i, pytz.utc).astimezone(pytz.timezone('Europe/Amsterdam')).strftime(
                           '%Y-%m-%d %H:%M:%S %Z%z')
                           for i in all_df['timestamp']])
         return all_df
@@ -301,13 +301,13 @@ class Garmin:
         heartrateData = json.load(inputBlob)
         heartrateList = [i['heartRate'] for i in heartrateData if 'heartRate' in i]
         statusList = [i['status'] for i in heartrateData if 'heartRate' in i]
-        localTimeList = [dt(i['timestamp']['date']['year'],
-                            i['timestamp']['date']['month'],
-                            i['timestamp']['date']['day'],
-                            i['timestamp']['time']['hour'],
-                            i['timestamp']['time']['minute'],
-                            i['timestamp']['time']['second'],
-                            tzinfo=pytz.utc) for i in heartrateData if 'heartRate' in i]
+        localTimeList = [datetime(i['timestamp']['date']['year'],
+                                  i['timestamp']['date']['month'],
+                                  i['timestamp']['date']['day'],
+                                  i['timestamp']['time']['hour'],
+                                  i['timestamp']['time']['minute'],
+                                  i['timestamp']['time']['second'],
+                                  tzinfo=pytz.utc) for i in heartrateData if 'heartRate' in i]
         localTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                          for i in localTimeList]
         heartrateDf = pd.DataFrame(list(zip(localTimeList, statusList, heartrateList)),
@@ -317,13 +317,13 @@ class Garmin:
     def readHrvAndroid(self, inputBlob):
         hrvData = json.load(inputBlob)
         bbiList = [i['bbi'] for i in hrvData if 'bbi' in i]
-        localTimeList = [dt(i['timestamp']['date']['year'],
-                            i['timestamp']['date']['month'],
-                            i['timestamp']['date']['day'],
-                            i['timestamp']['time']['hour'],
-                            i['timestamp']['time']['minute'],
-                            i['timestamp']['time']['second'],
-                            tzinfo=pytz.utc) for i in hrvData if 'bbi' in i]
+        localTimeList = [datetime(i['timestamp']['date']['year'],
+                                  i['timestamp']['date']['month'],
+                                  i['timestamp']['date']['day'],
+                                  i['timestamp']['time']['hour'],
+                                  i['timestamp']['time']['minute'],
+                                  i['timestamp']['time']['second'],
+                                  tzinfo=pytz.utc) for i in hrvData if 'bbi' in i]
         localTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                          for i in localTimeList]
         hrvDf = pd.DataFrame(list(zip(localTimeList, bbiList)),
@@ -333,13 +333,13 @@ class Garmin:
     def readRespirationAndroid(self, inputBlob):
         respirationData = json.load(inputBlob)
         breathsPerMinList = [i['breathsPerMinute'] for i in respirationData if 'breathsPerMinute' in i]
-        localTimeList = [dt(i['timestamp']['date']['year'],
-                            i['timestamp']['date']['month'],
-                            i['timestamp']['date']['day'],
-                            i['timestamp']['time']['hour'],
-                            i['timestamp']['time']['minute'],
-                            i['timestamp']['time']['second'],
-                            tzinfo=pytz.utc) for i in respirationData if 'breathsPerMinute' in i]
+        localTimeList = [datetime(i['timestamp']['date']['year'],
+                                  i['timestamp']['date']['month'],
+                                  i['timestamp']['date']['day'],
+                                  i['timestamp']['time']['hour'],
+                                  i['timestamp']['time']['minute'],
+                                  i['timestamp']['time']['second'],
+                                  tzinfo=pytz.utc) for i in respirationData if 'breathsPerMinute' in i]
         localTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                          for i in localTimeList]
         respirationDf = pd.DataFrame(list(zip(localTimeList, breathsPerMinList)),
@@ -350,25 +350,25 @@ class Garmin:
         stepsData = json.load(inputBlob)
         stepCountList = [i['stepCount'] for i in stepsData if 'stepCount' in i]
         totalStepsList = [i['totalSteps'] for i in stepsData if 'stepCount' in i]
-        localTimeList = [dt(i['startTimestamp']['date']['year'],
-                            i['startTimestamp']['date']['month'],
-                            i['startTimestamp']['date']['day'],
-                            i['startTimestamp']['time']['hour'],
-                            i['startTimestamp']['time']['minute'],
-                            i['startTimestamp']['time']['second'],
-                            tzinfo=pytz.utc) for i in stepsData if 'stepCount' in i]
+        localTimeList = [datetime(i['startTimestamp']['date']['year'],
+                                  i['startTimestamp']['date']['month'],
+                                  i['startTimestamp']['date']['day'],
+                                  i['startTimestamp']['time']['hour'],
+                                  i['startTimestamp']['time']['minute'],
+                                  i['startTimestamp']['time']['second'],
+                                  tzinfo=pytz.utc) for i in stepsData if 'stepCount' in i]
         localTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                          for i in localTimeList]
-        endTimeList = [dt(i['endTimestamp']['date']['year'],
-                          i['endTimestamp']['date']['month'],
-                          i['endTimestamp']['date']['day'],
-                          i['endTimestamp']['time']['hour'],
-                          i['endTimestamp']['time']['minute'],
-                          i['endTimestamp']['time']['second'],
-                          tzinfo=pytz.utc) for i in stepsData if 'stepCount' in i]
+        endTimeList = [datetime(i['endTimestamp']['date']['year'],
+                                i['endTimestamp']['date']['month'],
+                                i['endTimestamp']['date']['day'],
+                                i['endTimestamp']['time']['hour'],
+                                i['endTimestamp']['time']['minute'],
+                                i['endTimestamp']['time']['second'],
+                                tzinfo=pytz.utc) for i in stepsData if 'stepCount' in i]
         endTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                        for i in endTimeList]
-        durationList = [dt.timestamp(tEnd) - dt.timestamp(tStart) for tEnd, tStart in zip(endTimeList, localTimeList)]
+        durationList = [datetime.timestamp(tEnd) - datetime.timestamp(tStart) for tEnd, tStart in zip(endTimeList, localTimeList)]
         respirationDf = pd.DataFrame(list(zip(localTimeList, durationList, stepCountList, totalStepsList)),
                                      columns=["local_time", "steps_window_size", "step_count", "total_steps"])
         return respirationDf
@@ -377,13 +377,13 @@ class Garmin:
         stressData = json.load(inputBlob)
         stressScoreList = [i['stressScore'] for i in stressData if 'stressScore' in i]
         stressStatusList = [i['stressStatus'] for i in stressData if 'stressScore' in i]
-        localTimeList = [dt(i['timestamp']['date']['year'],
-                            i['timestamp']['date']['month'],
-                            i['timestamp']['date']['day'],
-                            i['timestamp']['time']['hour'],
-                            i['timestamp']['time']['minute'],
-                            i['timestamp']['time']['second'],
-                            tzinfo=pytz.utc) for i in stressData if 'stressScore' in i]
+        localTimeList = [datetime(i['timestamp']['date']['year'],
+                                  i['timestamp']['date']['month'],
+                                  i['timestamp']['date']['day'],
+                                  i['timestamp']['time']['hour'],
+                                  i['timestamp']['time']['minute'],
+                                  i['timestamp']['time']['second'],
+                                  tzinfo=pytz.utc) for i in stressData if 'stressScore' in i]
         localTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                          for i in localTimeList]
         stressDf = pd.DataFrame(list(zip(localTimeList, stressStatusList, stressScoreList)),
@@ -394,25 +394,25 @@ class Garmin:
         zerocrossingData = json.load(inputBlob)
         zeroCrossingCountList = [i['zeroCrossingCount'] for i in zerocrossingData if 'zeroCrossingCount' in i]
         totalEnergyList = [i['totalEnergy'] for i in zerocrossingData if 'zeroCrossingCount' in i]
-        localTimeList = [dt(i['startTimestamp']['date']['year'],
-                            i['startTimestamp']['date']['month'],
-                            i['startTimestamp']['date']['day'],
-                            i['startTimestamp']['time']['hour'],
-                            i['startTimestamp']['time']['minute'],
-                            i['startTimestamp']['time']['second'],
-                            tzinfo=pytz.utc) for i in zerocrossingData if 'zeroCrossingCount' in i]
+        localTimeList = [datetime(i['startTimestamp']['date']['year'],
+                                  i['startTimestamp']['date']['month'],
+                                  i['startTimestamp']['date']['day'],
+                                  i['startTimestamp']['time']['hour'],
+                                  i['startTimestamp']['time']['minute'],
+                                  i['startTimestamp']['time']['second'],
+                                  tzinfo=pytz.utc) for i in zerocrossingData if 'zeroCrossingCount' in i]
         localTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                          for i in localTimeList]
-        endTimeList = [dt(i['endTimestamp']['date']['year'],
-                          i['endTimestamp']['date']['month'],
-                          i['endTimestamp']['date']['day'],
-                          i['endTimestamp']['time']['hour'],
-                          i['endTimestamp']['time']['minute'],
-                          i['endTimestamp']['time']['second'],
-                          tzinfo=pytz.utc) for i in zerocrossingData if 'zeroCrossingCount' in i]
+        endTimeList = [datetime(i['endTimestamp']['date']['year'],
+                                i['endTimestamp']['date']['month'],
+                                i['endTimestamp']['date']['day'],
+                                i['endTimestamp']['time']['hour'],
+                                i['endTimestamp']['time']['minute'],
+                                i['endTimestamp']['time']['second'],
+                                tzinfo=pytz.utc) for i in zerocrossingData if 'zeroCrossingCount' in i]
         endTimeList = [i.astimezone(pytz.timezone('Europe/Amsterdam'))
                        for i in endTimeList]
-        durationList = [dt.timestamp(tEnd) - dt.timestamp(tStart) for tEnd, tStart in zip(endTimeList, localTimeList)]
+        durationList = [datetime.timestamp(tEnd) - datetime.timestamp(tStart) for tEnd, tStart in zip(endTimeList, localTimeList)]
         zerocrossingDf = pd.DataFrame(list(zip(localTimeList, durationList, zeroCrossingCountList, totalEnergyList)),
                                       columns=["local_time", "zero_crossing_window_size",
                                                "zero_crossing_count", "total_energy"])
@@ -510,12 +510,12 @@ class Garmin:
         else:
             zerocrossing_df = pd.DataFrame(columns=['timestamp'])
 
-        all_df = pd.merge(heartrate_df, hrv_df, on="local_time", how="outer")
-        all_df = pd.merge(all_df, respiration_df, on="local_time", how="outer")
+        # all_df = pd.merge(heartrate_df, hrv_df, on="local_time", how="outer")
+        all_df = pd.merge(heartrate_df, respiration_df, on="local_time", how="outer")
         all_df = pd.merge(all_df, steps_df, on="local_time", how="outer")
         all_df = pd.merge(all_df, stress_df, on="local_time", how="outer")
         all_df = pd.merge(all_df, zerocrossing_df, on="local_time", how="outer")
-        all_df.insert(0, "timestamp", [dt.timestamp(i) for i in all_df['local_time']])
+        all_df.insert(0, "timestamp", [datetime.timestamp(i) for i in all_df['local_time']])
         all_df = all_df.sort_values("timestamp").reset_index(drop=True)
         if summarizePerMinute:
             all_df.insert(0, "minutes_unix", [math.floor(i / 60) for i in all_df['timestamp']])
@@ -554,7 +554,7 @@ class Garmin:
 
         # Manually setting the "lastest" blob, this is not actually the latest, but it does have the most applicible data
         # and therefor good for testing
-        latest_blob_number = "1711448820"
+        # latest_blob_number = "1711448820"
 
         return latest_blob_number
 
@@ -562,32 +562,18 @@ class Garmin:
         container_client = self.blob_service_client.get_container_client(container=container)
         latest_blob_number = self.getLatestBlobNumber(subjectID)
 
-        # start_string = subjectID + "/sensordata/sync_"
-        # blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))# blob_names_list = [blob_name for blob_name in container_client.list_blob_names(name_starts_with=start_string) if blob_name.endswith('loggedStressData.json')]
-        # print("Blob names: ", blob_names_list)
-        # print("These are the blob names list sensordata", blob_names_list)
-        # Iterate over each file name in blob_names_list
-
         start_string = subjectID + "/garmindata/sync_" + latest_blob_number
         blob_names_list = list(container_client.list_blob_names(name_starts_with=start_string))
         print("These are the blob names list garmindata", blob_names_list)
-
-        for blob_name in blob_names_list:
-            # Check if the file name ends with 'loggedStressData.json'
-            if blob_name.endswith('loggedStressData.json'):
-                blob_client = container_client.get_blob_client(blob_name)
-                streamdownloader = blob_client.download_blob()
-                fileReader = json.loads(streamdownloader.readall())
-                print("This is the filereader: ", fileReader[0])
 
         if len(blob_names_list) == 0:
             raise FileNotFoundError(
                 "The data of this subject has not been unzipped yet. Please first run unzipSubject.")
         operating_system = self.getOperatingSystem(blob_names_list[0])
         if operating_system == "ios":
-            garmin_data = self.readAllJsonIos(self.blob_service_client, container, blob_names_list)
+            garmin_data = self.readAllJsonIos(container, blob_names_list)
         elif operating_system == "android":
-            garmin_data = self.readAllJsonAndroid(self.blob_service_client, container, blob_names_list, summarizePerMinute)
+            garmin_data = self.readAllJsonAndroid(container, blob_names_list, summarizePerMinute)
         else:
             raise OSError("The operating system is unknown. The options are android or ios.")
         garmin_data.insert(0, "subject", [subjectID] * len(garmin_data['timestamp']))
@@ -627,52 +613,41 @@ if __name__ == "__main__":
     # STUDY ENVIRONMENT PARAMETERS
     account_url = "https://vitalityhubwearabledata.blob.core.windows.net/"  # See explanation above
     sas_token = "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2024-07-28T17:31:44Z&st=2024-03-28T10:31:44Z&spr=https,http&sig=SR6G0FBa1z28RunlFPhDzv4%2FhEfKcvKd5gXGd8bkoZM%3D"
+    garmin = Garmin(account_url, sas_token)
 
-    subject = "testParticipant01"  # Select a subject that exists (see folders in "participants" container)
-    subject_list = ["", "", "", ""]  # Select multiple subjects that exist (see folders in "participants" container)
+    subject = "Wouter"  # Select a subject that exists (see folders in "participants" container)
+    # subject_list = ["Chavez", "testParticipant01"]  # Select multiple subjects that exist (see folders in "participants" container)
     # CALL FUNCTIONS
     # For unzipping and preprocessing multiple subjects at once.
-    # Garmin.unzipGroup(account_url, sas_token, subject_list)
+
+    # garmin.unzipGroup(subject_list=subject_list)
     # testdata = Garmin.getGarminDataGroup(account_url, sas_token, subject_list, False)
     # testdata.to_csv("garmin_data.csv")
 
     # For unzipping and preprocessing only one subject.
-    garmin = Garmin(account_url, sas_token)
     garmin.unzipSubject(subject)
 
 
     # def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute, blobServiceClient, container):
     testdata = garmin.getGarminDataSubject(subject, summarizePerMinute=False)
     testdata.to_csv("garmin_data.csv")
-
-    # weten dat er nieuwe data is
-    # nieuwe data krijgen zonder de oude data
-
     data = pd.read_csv("garmin_data.csv")
 
     # Example: Selecting specific columns
     # print(data)
-    selected_columns = data[['subject', 'timestamp', 'local_time', 'status', "stress"]]
+    # selected_columns = data[['subject', 'timestamp', 'local_time', 'status', "stress"]] # this line is for IOS
+    selected_columns = data[['subject', 'timestamp', 'local_time', 'stress_score', 'stress_status']] # This line if for android
 
-    valid_status_data = data[data['status'] == 'valid']
+    # valid_status_data = data[data['status'] == 'valid']
 
-    # Display the "stress" column for the filtered rows
-    selected_stress = valid_status_data[['stress', 'timestamp']]
-    first_timestamp = selected_stress['timestamp'].iloc[0]
-    last_timestamp = selected_stress['timestamp'].iloc[-1]
+    print(selected_columns)
 
-    time_passed = last_timestamp - first_timestamp
+    # valid_status_data = data[data['status'] == 'valid']
+    #
+    # # Display the "stress" column for the filtered rows
+    # selected_stress = valid_status_data[['stress']]
+    # stress_average = (np.sum(selected_stress, axis=0)) / (len(selected_stress))
+    # print("this is the average stress", stress_average)
 
-    print("First Timestamp:", first_timestamp)
-    print("Last Timestamp:", last_timestamp)
-    print("Passed Timestamp:", time_passed)
-
-
-    # status checken
-    # stress van bepaalde tijd
-
-    # resting_HR = data[['resting_HR']]
-
-    # print("resting_HR: ", resting_HR)
-    print(selected_stress)
+    # print(selected_stress)
 
