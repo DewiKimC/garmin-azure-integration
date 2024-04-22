@@ -113,7 +113,7 @@ class Garmin:
         stressList = [i['stressScore'] for i in stressData if all([x in i for x in checks])]
         statusList = [i['statusValue'] for i in stressData if all([x in i for x in checks])]
         stressdf =  pd.DataFrame(list(zip(tsList, stressList, statusList)),
-                                columns=["timestamp", "stress", "status"])
+                                columns=["timestamp", "stress_score", "stress_status"])
         return stressdf
 
     def readWellnessIos(self, inputBlob):
@@ -541,7 +541,6 @@ class Garmin:
                                                         zero_crossing_count=('zero_crossing_count', 'sum'),
                                                         total_energy=('total_energy', 'max'))
             all_df = all_df.reset_index(drop=True)
-
         return all_df
 
     def getLatestBlobNumber(self, subjectID):
@@ -580,9 +579,9 @@ class Garmin:
         garmin_data.insert(1, "os_type", [operating_system] * len(garmin_data['timestamp']))
         return garmin_data
 
-    def getGarminDataGroup(self, subjectList, summarizePerMinute):
+    def getGarminDataGroup(self, subject_list, summarizePerMinute):
         garminData = []
-        for subject in subjectList:
+        for subject in subject_list:
             subjectData = self.getGarminDataSubject(subject, summarizePerMinute)
             garminData.append(subjectData)
         garminData = pd.concat(garminData, axis=0)
@@ -615,39 +614,37 @@ if __name__ == "__main__":
     sas_token = "?sv=2022-11-02&ss=bfqt&srt=sco&sp=rwdlacupiytfx&se=2024-07-28T17:31:44Z&st=2024-03-28T10:31:44Z&spr=https,http&sig=SR6G0FBa1z28RunlFPhDzv4%2FhEfKcvKd5gXGd8bkoZM%3D"
     garmin = Garmin(account_url, sas_token)
 
-    subject = "Wouter"  # Select a subject that exists (see folders in "participants" container)
-    # subject_list = ["Chavez", "testParticipant01"]  # Select multiple subjects that exist (see folders in "participants" container)
+    # subject = "Chavez"  # Select a subject that exists (see folders in "participants" container)
+    subject_list = ["testParticipant01","Chavez"]  # Select multiple subjects that exist (see folders in "participants" container)
     # CALL FUNCTIONS
-    # For unzipping and preprocessing multiple subjects at once.
 
-    # garmin.unzipGroup(subject_list=subject_list)
-    # testdata = Garmin.getGarminDataGroup(account_url, sas_token, subject_list, False)
-    # testdata.to_csv("garmin_data.csv")
+    # For unzipping and preprocessing multiple subjects at once.
+    garmin.unzipGroup(subject_list=subject_list)
+    testdata = garmin.getGarminDataGroup(subject_list, summarizePerMinute=False)
+    testdata.to_csv("garmin_data.csv")
 
     # For unzipping and preprocessing only one subject.
-    garmin.unzipSubject(subject)
+    # garmin.unzipSubject(subject)
+    # testdata = garmin.getGarminDataSubject(subject, summarizePerMinute=False)
+    # testdata.to_csv("garmin_data.csv")
 
-
-    # def getGarminDataSubject(accountURL, sasToken, subjectID, summarizePerMinute, blobServiceClient, container):
-    testdata = garmin.getGarminDataSubject(subject, summarizePerMinute=False)
-    testdata.to_csv("garmin_data.csv")
     data = pd.read_csv("garmin_data.csv")
 
     # Example: Selecting specific columns
-    # print(data)
     # selected_columns = data[['subject', 'timestamp', 'local_time', 'status', "stress"]] # this line is for IOS
-    selected_columns = data[['subject', 'timestamp', 'local_time', 'stress_score', 'stress_status']] # This line if for android
+    subject_averages = []
 
-    # valid_status_data = data[data['status'] == 'valid']
+    for subject in subject_list:
+        selected_columns = data[(data['subject'] == subject) & (data['stress_status'] == 'valid')][
+            ['stress_score', 'stress_status']]
+        # Display the "stress_score" column for the filtered rows
+        selected_stress = selected_columns[['stress_score']]
+        stress_average_subject = (np.sum(selected_stress, axis=0)) / (len(selected_stress))
+        print("This is the stress average per subject: ", stress_average_subject)
+        subject_averages.append(stress_average_subject)
+    overall_average = (np.sum(subject_averages, axis=0)) / (len(subject_averages))
 
-    print(selected_columns)
+    print("this is the average stress", overall_average)
 
-    # valid_status_data = data[data['status'] == 'valid']
-    #
-    # # Display the "stress" column for the filtered rows
-    # selected_stress = valid_status_data[['stress']]
-    # stress_average = (np.sum(selected_stress, axis=0)) / (len(selected_stress))
-    # print("this is the average stress", stress_average)
 
-    # print(selected_stress)
 
