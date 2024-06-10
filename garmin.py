@@ -1,17 +1,21 @@
-import pandas as pd
-import numpy as np
-from io import BytesIO
-from zipfile import ZipFile
-from datetime import datetime, timedelta
+import json
+import math
 import os
 import shutil
-import json
+from datetime import datetime
+from io import BytesIO
+from zipfile import ZipFile
+import numpy as np
+import pandas as pd
 import pytz
-import math
 from azure.storage.blob import BlobServiceClient
+from flask import Flask, jsonify, Response
+from flask_cors import CORS
+import time
+
 
 class Garmin:
-    def __init__(self, account_url, sas_token):
+    def __init__(self,account_url, sas_token):
         self.blob_service_client = BlobServiceClient(account_url=account_url, credential=sas_token)
 
     def unzipGarminFile(self, inputBlob, tempLocalPath):
@@ -292,7 +296,7 @@ class Garmin:
             all_df = pd.merge(all_df, stress_df, on="timestamp", how="outer")
         all_df = all_df.sort_values("timestamp").reset_index(drop=True)
         all_df.insert(1, "local_time",
-                      [datetime.fromtimestamp(i, pytz.utc).astimezone(pytz.timezone('Europe/Amsterdam')).strftime(
+                          [datetime.fromtimestamp(i, pytz.utc).astimezone(pytz.timezone('Europe/Amsterdam')).strftime(
                           '%Y-%m-%d %H:%M:%S %Z%z')
                           for i in all_df['timestamp']])
         return all_df
@@ -551,10 +555,6 @@ class Garmin:
         latest_blob = sorted(blob_list, key=lambda blob: blob.creation_time)[-1]
         latest_blob_number = latest_blob.name.split("_")[1]
 
-        # Manually setting the "lastest" blob, this is not actually the latest, but it does have the most applicible data
-        # and therefor good for testing
-        # latest_blob_number = "1711448820"
-
         return latest_blob_number
 
     def getGarminDataSubject(self, subjectID, summarizePerMinute, container="participants"):  # , lastUpdatedItem
@@ -600,8 +600,11 @@ class Garmin:
         uniqueFileList = list(set(fileList))
         return uniqueFileList
 
+overall_average_stress =  None
+process_blob_timestamp = 0
 
-if __name__ == "__main__":
+def process_blob():
+    global overall_average_stress
     # The script is based on generating a SAS token to use for data access.
     # first "get shared access signature", then select the options you desire for permissions and other parameters and click "create".
     # In the connection string field, you will find a part that says "BlobEndpoint=https....". Everything from the "https:" till ".net/" is put below as account_url.
@@ -615,18 +618,13 @@ if __name__ == "__main__":
     garmin = Garmin(account_url, sas_token)
 
     # subject = "Chavez"  # Select a subject that exists (see folders in "participants" container)
-    subject_list = ["testParticipant01","Chavez"]  # Select multiple subjects that exist (see folders in "participants" container)
+    subject_list = ["participant1"]  # Select multiple subjects that exist (see folders in "participants" container)
     # CALL FUNCTIONS
 
     # For unzipping and preprocessing multiple subjects at once.
     garmin.unzipGroup(subject_list=subject_list)
     testdata = garmin.getGarminDataGroup(subject_list, summarizePerMinute=False)
     testdata.to_csv("garmin_data.csv")
-
-    # For unzipping and preprocessing only one subject.
-    # garmin.unzipSubject(subject)
-    # testdata = garmin.getGarminDataSubject(subject, summarizePerMinute=False)
-    # testdata.to_csv("garmin_data.csv")
 
     data = pd.read_csv("garmin_data.csv")
 
@@ -640,11 +638,30 @@ if __name__ == "__main__":
         # Display the "stress_score" column for the filtered rows
         selected_stress = selected_columns[['stress_score']]
         stress_average_subject = (np.sum(selected_stress, axis=0)) / (len(selected_stress))
-        print("This is the stress average per subject: ", stress_average_subject)
+        print("This is the stress average of ", subject, stress_average_subject)
         subject_averages.append(stress_average_subject)
-    overall_average = (np.sum(subject_averages, axis=0)) / (len(subject_averages))
+    overall_average_stress = (np.sum(subject_averages, axis=0)) / (len(subject_averages))
 
-    print("this is the average stress", overall_average)
+app = Flask(__name__)
+CORS(app, origins=["http://localhost:5173"])
 
+@app.route('/stress', methods=['GET'])
+def get_stress_average():
+    global process_blob_timestamp, overall_average_stress
 
+    # If last time that "overall_average_stress" was processed is longer then 15 minutes ago.
+    # Then, we re-calculate the "overall_average_stress" value and reset the timestamp
+    if (time.time() - process_blob_timestamp) > 10:
+        process_blob()
+        process_blob_timestamp = time.time()
 
+    if overall_average_stress is None:
+        print("[ERROR] 'overall_average_stress' is None")
+        return Response("overall_average_stress is None", status=501)
+    else:
+        # Convert overall_average_stress to a list or scalar for JSON serialization
+        overall_average_stress_serializable = overall_average_stress.tolist()
+        return jsonify({ "overall_average_stress": overall_average_stress_serializable})  # Convert numpy array to list for JSON serialization
+
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=5001)
